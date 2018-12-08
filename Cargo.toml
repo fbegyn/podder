@@ -1,0 +1,9 @@
+[package]
+name = "podder"
+version = "0.1.0"
+authors = ["Francis Begyn <francis.begyn@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+structopt = "0.2.10"
+rss = { version = "1.6.1", features = ["from_url"] }
