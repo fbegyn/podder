@@ -1,6 +1,8 @@
-use rss::Channel;
-use std::fmt;
+mod episode;
+mod podcast;
+
 use structopt::StructOpt;
+use threadpool::ThreadPool;
 
 #[derive(Debug, StructOpt)]
 #[structopt(raw(setting = "structopt::clap::AppSettings::ColoredHelp"))]
@@ -14,74 +16,62 @@ struct Cli {
         parse(from_str)
     )]
     urls: Vec<String>,
-    #[structopt(short = "b", long = "backlog", default_value = "30")]
-    backlog: i16,
+    #[structopt(short = "b", long = "backlog", default_value = "5")]
+    backlog: usize,
+    #[structopt(short = "j", long = "threads", default_value = "3")]
+    threads: usize,
 }
 
-struct Episode {
-    title: String,
-    link: String,
-    url: String,
-    size: i32,
-    release_date: String,
-}
-
-impl fmt::Display for Episode {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Title: {}\nRelease Date: {}\nLink: {}\nSize: {}\nURL: {}\n\n",
-            self.title, self.release_date, self.link, self.size, self.url
-        )
-    }
-}
-
-fn main() {
+// Program
+fn main() -> Result<(), Box<std::error::Error>> {
+    // Get CLI args and flags
     let args = Cli::from_args();
+    let pool = ThreadPool::new(args.threads); // Create a worker pool
+
+    // Get RSS channels from the arguments
     let feeds: Vec<rss::Channel> = args
         .urls
         .iter()
-        .map(|x| Channel::from_url(x as &str).expect("Failed to parse url"))
+        .map(|x| {
+            let mut t = rss::Channel::from_url(&x).expect("Failed to parse url");
+            t.set_link(x as &str);
+            t
+        })
         .collect();
+
+    let pods: Vec<podcast::Podcast> = feeds
+        .iter()
+        .map(move |f| {
+            return podcast::Podcast {
+                title: f.title().parse().expect("Failed to read podcast title"),
+                url: f.link().parse().expect("Failed to read the link"),
+                episodes: f.clone().into_items().len(),
+            };
+        })
+        .collect();
+
+    println!("{}\n", pods[0]);
+
+    // TODO: make this iterate over all channels
     let eps = feeds[0].clone().into_items();
-    let episodes = get_episodes(eps).expect("failed to get episodes");
-    for i in 0..4 {
-        println!("{}", episodes[i]);
+    let episodes = get_episodes(eps)?;
+
+    // Start downloading the episodes
+    for i in 0..args.backlog {
+        let mut eps = episodes[i].clone();
+        pool.execute(move || {
+            eps.download();
+        });
     }
+    pool.join(); // Wait untill all the workers have finished
+    Ok(())
 }
 
-fn get_episodes(items: Vec<rss::Item>) -> std::io::Result<Vec<Episode>> {
-    let mut episodes: Vec<Episode> = Vec::new();
+// Creates episodes from an RSS feed
+fn get_episodes(items: Vec<rss::Item>) -> Result<Vec<episode::Episode>, Box<std::error::Error>> {
+    let mut episodes: Vec<episode::Episode> = Vec::new();
     for ep in items.iter() {
-        episodes.push(Episode {
-            title: ep
-                .title()
-                .expect("Unable to parse title")
-                .parse()
-                .expect("Unable to parse title"),
-            link: ep
-                .link()
-                .expect("No link")
-                .parse()
-                .expect("Unable to parse link"),
-            url: ep
-                .enclosure()
-                .expect("No enclosure:")
-                .url()
-                .parse()
-                .expect("Unable to parse url"),
-            size: ep
-                .enclosure()
-                .expect("No enclosure")
-                .length()
-                .parse()
-                .expect("Unable to parse size"),
-            release_date: ep
-                .pub_date()
-                .expect("No release date")
-                .parse()
-                .expect("Unable to parse date"),
-        });
+        episodes.push(episode::Episode::from_item(ep.clone())?);
     }
     Ok(episodes)
 }

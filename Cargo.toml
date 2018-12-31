@@ -7,3 +7,5 @@ edition = "2018"
 [dependencies]
 structopt = "0.2.10"
 rss = { version = "1.6.1", features = ["from_url"] }
+reqwest = "0.9.5"
+threadpool = "1.0"
